@@ -12,14 +12,13 @@ BUILD_DIR=smatek
 BUILD_UBOOT=false
 BUILD_ANDROID=false
 
-# Pfade
 UBOOT_DIR="u-boot"
 RKBIN_DIR="rkbin"
 CROSS_COMPILE="aarch64-linux-gnu-"
 
-# rkbin Binaries (Versionen ggf. anpassen)
-BL31=$(ls ${RKBIN_DIR}/bin/rk35/rk3568_bl31_*.elf | tail -1)
-DDR=$(ls ${RKBIN_DIR}/bin/rk35/rk3568_ddr_*MHz_*.bin | tail -1)
+ANDROID_ROOT=$(cd "$(dirname "$0")" && pwd)
+BL31=$(ls ${ANDROID_ROOT}/${RKBIN_DIR}/bin/rk35/rk3568_bl31_v*.elf | tail -1)
+DDR=$(ls ${ANDROID_ROOT}/${RKBIN_DIR}/bin/rk35/rk3568_ddr_1560MHz_v*.bin | tail -1)
 
 # check pass argument
 while getopts "AB" arg
@@ -38,8 +37,8 @@ do
     esac
 done
 
-if [ ! -d "$BUILD_DIR/release" ]; then
-    mkdir -p "$BUILD_DIR/release"
+if [ ! -d "$BUILD_DIR" ]; then
+    mkdir -p "$BUILD_DIR"
 fi
 
 # build clean
@@ -64,8 +63,9 @@ if [ "$BUILD_UBOOT" = true ]; then
     fi
 
     echo ">>> Copying U-Boot artifacts..."
-    cp uboot.img ../${BUILD_DIR}/release/
-    cp *loader*.bin ../${BUILD_DIR}/release/ 2>/dev/null
+	cp u-boot.img ../${BUILD_DIR}/
+	cp u-boot-dtb.img ../${BUILD_DIR}/
+    cp *loader*.bin ../${BUILD_DIR}/ 2>/dev/null
 
     echo ">>> U-Boot build successful!"
     cd ..
