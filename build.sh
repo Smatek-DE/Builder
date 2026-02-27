@@ -1,15 +1,17 @@
 #!/bin/bash
 usage()
 {
-    echo "USAGE: [-B] [-A] [-C]"
+    echo "USAGE: [-b] [-a] [-c] [-r]"
     echo "  -B = build u-boot"
     echo "  -A = build Android"
     echo "  -C = clean build output"
+    echo "  -R = Refresh Repositorys"
     exit 1
 }
 
 BUILD_DIR=smatek
 BUILD_INSTRUCTIONS=false
+BUILD_REFRESH=false
 BUILD_UBOOT=false
 BUILD_ANDROID=false
 BUILD_CLEAN=false
@@ -29,31 +31,43 @@ BL32=$(ls ${ANDROID_ROOT}/${RKBIN_DIR}/bin/rk35/rk3568_bl32_v*.bin   2>/dev/null
 DDR=$(ls  ${ANDROID_ROOT}/${RKBIN_DIR}/bin/rk35/rk3568_ddr_1056MHz_v*.bin 2>/dev/null | grep -v "eyescan" | tail -1)
 
 # check pass argument
-while getopts "ABC" arg
+while getopts "ABCR" arg
 do
-    case $arg in
-        A)
-            echo "will build Android"
-            BUILD_ANDROID=true
-            BUILD_INSTRUCTIONS=true
-            ;;
-        B)
-            echo "will build U-Boot"
-            BUILD_UBOOT=true
-            BUILD_INSTRUCTIONS=true
-            ;;
-        C)
-            BUILD_CLEAN=true
-            BUILD_INSTRUCTIONS=true
-            ;;
-        ?)
-            usage ;;
-    esac
+case $arg in
+A)
+    echo "will build Android"
+    BUILD_ANDROID=true
+    BUILD_INSTRUCTIONS=true
+    ;;
+B)
+    echo "will build U-Boot"
+    BUILD_UBOOT=true
+    BUILD_INSTRUCTIONS=true
+    ;;
+R)
+    BUILD_REFRESH=true
+    BUILD_INSTRUCTIONS=true
+    ;;
+C)
+    BUILD_CLEAN=true
+    BUILD_INSTRUCTIONS=true
+    ;;
+?)
+    usage ;;
+esac
 done
 
 # Print usage/help
 if [ "$BUILD_INSTRUCTIONS" = false ] ; then
     usage
+fi
+
+# Refresh Repositorys
+if [ "$BUILD_REFRESH" = true ] ; then
+    echo ">>> Refreshing repositories..."
+    git -C "${ANDROID_ROOT}/.repo/manifests" pull
+    repo sync -j15 --force-remove-dirty --force-sync
+    echo ">>> Repository refresh done."
 fi
 
 if [ ! -d "$BUILD_DIR" ]; then
@@ -119,5 +133,7 @@ fi
 # Android bauen
 if [ "$BUILD_ANDROID" = true ]; then
     echo ">>> Building Android..."
-    # kommt noch
+    source build/envsetup.sh
+    lunch aosp_arm64-eng # ToDo
+    m -j$(nproc)
 fi
