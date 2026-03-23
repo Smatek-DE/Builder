@@ -1,20 +1,43 @@
 #!/bin/bash
-usage()
-{
-    echo "USAGE: [-B] [-A] [-C] [-R] [-K]"
+
+usage() {
+    echo "USAGE: [-B] [-A] [-C] [-R] [-K] [-T]"
     echo "  -B = build u-boot"
     echo "  -K = build Kernel"
     echo "  -A = build Android"
+    echo "  -T = build Tools"
     echo "  -C = clean build output"
     echo "  -R = Refresh Repositorys"
     exit 1
 }
 
-# Makefile-Patch Funktion
+# Prüft ob eine Datei existiert, bricht sonst mit Fehlermeldung ab
+require_file() {
+    local file="$1"
+    local desc="${2:-$1}"
+	
+    if [ ! -f "$file" ]; then
+        echo "ERROR: Required file not found: $desc"
+        echo "       Expected at: $file"
+        exit 1
+    fi
+}
+
+# Kopiert eine Datei nach Existenzprüfung
+copy_artifact() {
+    local src="$1"
+    local dst="$2"
+    local desc="${3:-$(basename "$src")}"
+    require_file "$src" "$desc"
+    cp "$src" "$dst"
+    echo "    [OK] $desc → $dst"
+}
+
 patch_kernel_makefile() {
-    # ToDo: automatically find Makefile.append on these paths (for dynamic dts configurations)
-    KERNEL_MAKEFILE="${ANDROID_ROOT}/kernel/rockchip/arch/arm64/boot/dts/rockchip/Makefile"
-    APPEND_FILE="${ANDROID_ROOT}/kernel/rockchip/arch/arm64/boot/dts/rockchip/Makefile.append"
+    local KERNEL_MAKEFILE="${ANDROID_ROOT}/kernel/rockchip/arch/arm64/boot/dts/rockchip/Makefile"
+    local APPEND_FILE="${ANDROID_ROOT}/kernel/rockchip/arch/arm64/boot/dts/rockchip/Makefile.append"
+
+    require_file "$APPEND_FILE" "Kernel Makefile.append"
 
     if ! grep -q "rk3566-smatek-s9pe-nz.dtb" "${KERNEL_MAKEFILE}"; then
         cat "${APPEND_FILE}" >> "${KERNEL_MAKEFILE}"
@@ -25,79 +48,57 @@ patch_kernel_makefile() {
 }
 
 patch_additional() {
-    # WifiTrackerLib prüfen und ggf. entfernen
-    #if ! find . -name "Android.bp" -exec grep -l "name: \"WifiTrackerLib\"" {} \; 2>/dev/null | grep -q .; then
-    #    echo "WifiTrackerLib nicht gefunden - entferne Dependency aus SettingsLib"
-    #    sed -i '/"WifiTrackerLib"/d' frameworks/base/packages/SettingsLib/Android.bp
-    #fi
-
-    #find prebuilts/abi-dumps/vndk/30 -name libwifi-system-iface.so.lsdump -delete
-
-    #sed -i '/"libwifi-system-iface"/d' system/connectivity/wificond/Android.bp
-    #sed -i '/"libwifi-system-iface-test"/d' system/connectivity/wificond/Android.bp
-    #sed -i '/libwifi-system-iface.so/d' build/make/target/product/gsi/30.txt
-    #echo "" > frameworks/base/tools/protologtool/Android.bp
+    # Fix Wifi library
+    grep -q 'shared_libs: \["libwifi-system-iface"\]' system/connectivity/wificond/Android.bp || \
+        sed -i 's/    include_dirs: \["system\/connectivity"\],/    include_dirs: ["system\/connectivity"],\n    shared_libs: ["libwifi-system-iface"],/' system/connectivity/wificond/Android.bp
+    echo ">>> Additional patches applied."
 }
 
-BUILD_DIR=smatek
-BUILD_INSTRUCTIONS=false
-BUILD_REFRESH=false
-BUILD_UBOOT=false
-BUILD_KERNEL=false
-BUILD_ANDROID=false
-BUILD_CLEAN=false
-
-UBOOT_DIR="u-boot"
-RKBIN_DIR="rkbin"
-CROSS_COMPILE="aarch64-linux-gnu-"
-
+# Konfiguration
 ANDROID_ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+BUILD_DIR="${ANDROID_ROOT}/smatek"
+UBOOT_DIR="${ANDROID_ROOT}/u-boot"
+RKBIN_DIR="${ANDROID_ROOT}/rkbin"
+AOSP_OUT="${ANDROID_ROOT}/out/target/product/rk3566"
+
+CROSS_COMPILE="aarch64-linux-gnu-"
 
 # Eigene TRUST.ini (liegt im Projektverzeichnis, nicht in rkbin)
 TRUST_INI="${ANDROID_ROOT}/trust/RK3568TRUST.ini"
 
 # Blobs automatisch ermitteln (neueste Version jeweils)
-BL31=$(ls ${ANDROID_ROOT}/${RKBIN_DIR}/bin/rk35/rk3568_bl31_v*.elf   2>/dev/null | grep -v "rt_\|ultra_\|cpu3_\|l3_part" | tail -1)
-BL32=$(ls ${ANDROID_ROOT}/${RKBIN_DIR}/bin/rk35/rk3568_bl32_v*.bin   2>/dev/null | tail -1)
-DDR=$(ls  ${ANDROID_ROOT}/${RKBIN_DIR}/bin/rk35/rk3568_ddr_1056MHz_v*.bin 2>/dev/null | grep -v "eyescan" | tail -1)
+BL31=$(ls "${RKBIN_DIR}/bin/rk35/rk3568_bl31_v"*.elf   2>/dev/null | grep -v "rt_\|ultra_\|cpu3_\|l3_part" | tail -1)
+BL32=$(ls "${RKBIN_DIR}/bin/rk35/rk3568_bl32_v"*.bin   2>/dev/null | tail -1)
+DDR=$(ls  "${RKBIN_DIR}/bin/rk35/rk3568_ddr_1056MHz_v"*.bin 2>/dev/null | grep -v "eyescan" | tail -1)
 
-# check pass argument
-while getopts "ABCRK" arg
-do
-case $arg in
-A)
-    echo "will build Android"
-    BUILD_ANDROID=true
-    BUILD_INSTRUCTIONS=true
-    ;;
-B)
-    echo "will build U-Boot"
-    BUILD_UBOOT=true
-    BUILD_INSTRUCTIONS=true
-    ;;
-R)
-    BUILD_REFRESH=true
-    BUILD_INSTRUCTIONS=true
-    ;;
-C)
-    BUILD_CLEAN=true
-    BUILD_INSTRUCTIONS=true
-    ;;
-K)
-    BUILD_KERNEL=true
-    ;;
-?)
-    usage ;;
-esac
+BUILD_INSTRUCTIONS=false
+BUILD_REFRESH=false
+BUILD_TOOLS=false
+BUILD_UBOOT=false
+BUILD_KERNEL=false
+BUILD_ANDROID=false
+BUILD_CLEAN=false
+
+while getopts "ABCRKT" arg; do
+    case $arg in
+        A) echo "will build Android";  BUILD_ANDROID=true;  BUILD_INSTRUCTIONS=true ;;
+        B) echo "will build U-Boot";   BUILD_UBOOT=true;    BUILD_INSTRUCTIONS=true ;;
+        R)                             BUILD_REFRESH=true;  BUILD_INSTRUCTIONS=true ;;
+        C)                             BUILD_CLEAN=true;    BUILD_INSTRUCTIONS=true ;;
+        K)                             BUILD_KERNEL=true;   BUILD_INSTRUCTIONS=true ;;
+        T)                             BUILD_TOOLS=true;    BUILD_INSTRUCTIONS=true ;;
+        ?) usage ;;
+    esac
 done
 
-# Print usage/help
-if [ "$BUILD_INSTRUCTIONS" = false ] ; then
+if [ "$BUILD_INSTRUCTIONS" = false ]; then
     usage
 fi
 
-# Refresh Repositorys
-if [ "$BUILD_REFRESH" = true ] ; then
+mkdir -p "$BUILD_DIR"
+
+if [ "$BUILD_REFRESH" = true ]; then
     echo ">>> Refreshing repositories..."
     git -C "${ANDROID_ROOT}/.repo/manifests" pull
     repo sync -j15 --force-remove-dirty --force-sync --prune
@@ -105,18 +106,12 @@ if [ "$BUILD_REFRESH" = true ] ; then
     echo ">>> Repository refresh done."
 fi
 
-if [ ! -d "$BUILD_DIR" ]; then
-    mkdir -p "$BUILD_DIR"
-fi
-
-# build clean
-if [ "$BUILD_CLEAN" = true ] ; then
+if [ "$BUILD_CLEAN" = true ]; then
     echo ">>> Cleaning build output..."
     rm -rf "${BUILD_DIR:?}/"*
     echo ">>> Clean done."
 fi
 
-# U-Boot bauen
 if [ "$BUILD_UBOOT" = true ]; then
     echo ">>> Building U-Boot..."
     echo "    BL31      : ${BL31}"
@@ -133,12 +128,9 @@ if [ "$BUILD_UBOOT" = true ]; then
         fi
     done
 
-    if [ ! -f "${TRUST_INI}" ]; then
-        echo "ERROR: TRUST ini not found: ${TRUST_INI}"
-        exit 1
-    fi
+    require_file "${TRUST_INI}" "TRUST ini"
 
-    cd ${UBOOT_DIR} || exit
+    cd "${UBOOT_DIR}"
 
     # Compiler-Pfad in make.sh patchen falls noch nicht geschehen
     if grep -q "gcc-linaro-6.3.1-2017.05" make.sh; then
@@ -146,59 +138,130 @@ if [ "$BUILD_UBOOT" = true ]; then
         sed -i 's|CROSS_COMPILE_ARM64=../prebuilts/gcc/linux-x86/aarch64/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-|CROSS_COMPILE_ARM64=/usr/bin/aarch64-linux-gnu-|' make.sh
     fi
 
-    # Rockchip make.sh: BL31 per Argument, BL32/OP-TEE ueber eigene TRUST.ini
-    ./make.sh rk3568 --bl31 ${BL31} ${TRUST_INI}
+    ./make.sh rk3568 --bl31 "${BL31}" "${TRUST_INI}"
 
-    if [ $? -ne 0 ]; then
-        echo "ERROR: U-Boot build failed!"
-        exit 1
-    fi
+    cd "${RKBIN_DIR}"
+    tools/loaderimage --pack --trustos \
+        RKTRUST/RK3566TRUST_ULTRA.ini \
+        "${BUILD_DIR}/trust.img" 0x43000000
 
+    cd "${UBOOT_DIR}"
     echo ">>> Copying U-Boot artifacts..."
-    cp uboot.img    ../${BUILD_DIR}/
-    cp *loader*.bin ../${BUILD_DIR}/ 2>/dev/null
+    copy_artifact "${UBOOT_DIR}/uboot.img"         "${BUILD_DIR}/uboot.img"      "uboot.img"
+    # Loader-Binary (Name variiert je nach Build)
+    LOADER_BIN=$(ls "${UBOOT_DIR}/"*loader*.bin 2>/dev/null | head -1)
+    if [ -n "$LOADER_BIN" ]; then
+        copy_artifact "$LOADER_BIN" "${BUILD_DIR}/$(basename "$LOADER_BIN")" "MiniLoaderAll.bin"
+    else
+        echo "    [WARN] No loader*.bin found in ${UBOOT_DIR}"
+    fi
 
     echo ""
     echo ">>> U-Boot build successful!"
-    echo "    Output: ${ANDROID_ROOT}/${BUILD_DIR}/"
-    ls -lh ../${BUILD_DIR}/
-    cd ..
+    echo "    Output: ${BUILD_DIR}/"
+    ls -lh "${BUILD_DIR}/"
+    cd "${ANDROID_ROOT}"
 fi
 
-# Kernel bauen
 if [ "$BUILD_KERNEL" = true ]; then
     echo ">>> Building Kernel..."
-    cd "$ANDROID_ROOT/kernel/rockchip"
+    cd "${ANDROID_ROOT}/kernel/rockchip"
 
     export ARCH=arm64
-    export CROSS_COMPILE="$ANDROID_ROOT/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-"
-    export CC="$ANDROID_ROOT/prebuilts/clang/host/linux-x86/clang-r383902b1/bin/clang"
+    export CROSS_COMPILE="${ANDROID_ROOT}/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-"
+    export CC="${ANDROID_ROOT}/prebuilts/clang/host/linux-x86/clang-r383902b1/bin/clang"
     export CLANG_TRIPLE=aarch64-linux-gnu-
 
-    make rockchip_defconfig CC=$CC CROSS_COMPILE=$CROSS_COMPILE CLANG_TRIPLE=$CLANG_TRIPLE
-    make -j$(nproc) Image dtbs CC=$CC CROSS_COMPILE=$CROSS_COMPILE CLANG_TRIPLE=$CLANG_TRIPLE
+    make rockchip_defconfig CC="$CC" CROSS_COMPILE="$CROSS_COMPILE" CLANG_TRIPLE="$CLANG_TRIPLE"
+    make -j"$(nproc)" Image dtbs CC="$CC" CROSS_COMPILE="$CROSS_COMPILE" CLANG_TRIPLE="$CLANG_TRIPLE"
 
-    # Zurück ins Root-Verzeichnis — explizit absolut
-    cd "$ANDROID_ROOT"
+    cd "${ANDROID_ROOT}"
 
     echo ">>> Moving Kernel..."
-    mkdir -p out/target/product/rk3566/
-    cp kernel/rockchip/arch/arm64/boot/Image out/target/product/rk3566/kernel
-    cp kernel/rockchip/arch/arm64/boot/dts/rockchip/rk3566-smatek-s9pe-nz.dtb out/target/product/rk3566/dtb.img
+    mkdir -p "${AOSP_OUT}"
 
-    # Prüfen ob cp erfolgreich war
-    ls -lh out/target/product/rk3566/kernel && echo ">>> Kernel copy OK" || { echo ">>> Kernel copy FAILED"; exit 1; }
+    copy_artifact \
+        "${ANDROID_ROOT}/kernel/rockchip/arch/arm64/boot/Image" \
+        "${AOSP_OUT}/kernel" \
+        "Kernel Image"
+
+    copy_artifact \
+        "${ANDROID_ROOT}/kernel/rockchip/arch/arm64/boot/dts/rockchip/rk3566-smatek-s9pe-nz.dtb" \
+        "${AOSP_OUT}/dtb.img" \
+        "Device Tree (dtb.img)"
+
+    echo ">>> Kernel build successful!"
 fi
 
-# Android bauen
+
+if [ "$BUILD_TOOLS" = true ]; then
+    cd ~/Android
+    source build/envsetup.sh
+    lunch smatek_rk3566-userdebug
+    make avbtool -j$(nproc)
+fi
+
 if [ "$BUILD_ANDROID" = true ]; then
     patch_kernel_makefile
     patch_additional
 
     echo ">>> Building Android..."
-    source build/envsetup.sh
-    lunch smatek_rk3566-userdebug
-    m -j$(nproc)
+    #source build/envsetup.sh
+    #lunch smatek_rk3566-userdebug
+    #m -j$(nproc)
+
+    echo ">>> Copying Android artifacts..."
+    copy_artifact "${AOSP_OUT}/boot.img"     "${BUILD_DIR}/boot.img"     "boot.img"
+    copy_artifact "${AOSP_OUT}/recovery.img" "${BUILD_DIR}/recovery.img" "recovery.img"
+    copy_artifact "${AOSP_OUT}/system.img"   "${BUILD_DIR}/system.img"   "system.img"
+    copy_artifact "${AOSP_OUT}/vendor.img"   "${BUILD_DIR}/vendor.img"   "vendor.img"
+    copy_artifact "${AOSP_OUT}/product.img"  "${BUILD_DIR}/product.img"  "product.img"
+
+    # vbmeta.img
+    printf 'AVB0' > ~/Android/smatek/vbmeta.img
+    dd if=/dev/zero bs=1 count=$((1048576 - 4)) >> ~/Android/smatek/vbmeta.img 2>/dev/null
+    xxd ~/Android/smatek/vbmeta.img | head -4
+    ls -lh ~/Android/smatek/vbmeta.img
+
+    # misc.img — immer leer
+    dd if=/dev/zero of="${BUILD_DIR}/misc.img" bs=512 count=8192 status=none
+    echo "    [OK] misc.img (empty)"
+	
+	# dtbo.img TODO
+    copy_artifact "/mnt/f/BABTouchpanel/Backups/backup_dtbo.img" "${BUILD_DIR}/dtbo.img" "dtbo.img (original backup)"
+    #dd if=/dev/zero of=~/Android/smatek/dtbo.img bs=512 count=8192 status=none
+    #echo "    [OK] dtbo.img (empty)"
+
+    # Make images RAW
+    simg2img /root/Android/smatek/system.img  /root/Android/smatek/system_raw.img
+    simg2img /root/Android/smatek/vendor.img  /root/Android/smatek/vendor_raw.img
+    simg2img /root/Android/smatek/product.img /root/Android/smatek/product_raw.img
+
+    SYSTEM_SIZE=$(stat -c%s /root/Android/smatek/system_raw.img)
+    VENDOR_SIZE=$(stat -c%s /root/Android/smatek/vendor_raw.img)
+    PRODUCT_SIZE=$(stat -c%s /root/Android/smatek/product_raw.img)
+    TOTAL=$((SYSTEM_SIZE + VENDOR_SIZE + PRODUCT_SIZE + 104857600)) # +100MB safety space
+
+    lpmake \
+        --metadata-size 65536 \
+        --super-name super \
+        --metadata-slots 2 \
+        --device super:${TOTAL} \
+        --group main:${TOTAL} \
+        --partition system:readonly:${SYSTEM_SIZE}:main \
+        --image system=/root/Android/smatek/system_raw.img \
+        --partition vendor:readonly:${VENDOR_SIZE}:main \
+        --image vendor=/root/Android/smatek/vendor_raw.img \
+        --partition product:readonly:${PRODUCT_SIZE}:main \
+        --image product=/root/Android/smatek/product_raw.img \
+        --sparse \
+        --output /root/Android/smatek/super.img
+
+    echo ""
+    echo ">>> Android build successful!"
+    echo "    Output: ${BUILD_DIR}/"
+    ls -lh "${BUILD_DIR}/"
+    cd "${ANDROID_ROOT}"
 fi
 
 echo ">>> Build done."
