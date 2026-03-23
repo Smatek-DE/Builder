@@ -26,15 +26,15 @@ patch_kernel_makefile() {
 
 patch_additional() {
     # WifiTrackerLib prüfen und ggf. entfernen
-    if ! find . -name "Android.bp" -exec grep -l "name: \"WifiTrackerLib\"" {} \; 2>/dev/null | grep -q .; then
-        echo "WifiTrackerLib nicht gefunden - entferne Dependency aus SettingsLib"
-        sed -i '/"WifiTrackerLib"/d' frameworks/base/packages/SettingsLib/Android.bp
-    fi
+    #if ! find . -name "Android.bp" -exec grep -l "name: \"WifiTrackerLib\"" {} \; 2>/dev/null | grep -q .; then
+    #    echo "WifiTrackerLib nicht gefunden - entferne Dependency aus SettingsLib"
+    #    sed -i '/"WifiTrackerLib"/d' frameworks/base/packages/SettingsLib/Android.bp
+    #fi
 
-    find prebuilts/abi-dumps/vndk/30 -name libwifi-system-iface.so.lsdump -delete
+    #find prebuilts/abi-dumps/vndk/30 -name libwifi-system-iface.so.lsdump -delete
 
-    sed -i '/"libwifi-system-iface"/d' system/connectivity/wificond/Android.bp
-    sed -i '/"libwifi-system-iface-test"/d' system/connectivity/wificond/Android.bp
+    #sed -i '/"libwifi-system-iface"/d' system/connectivity/wificond/Android.bp
+    #sed -i '/"libwifi-system-iface-test"/d' system/connectivity/wificond/Android.bp
     #sed -i '/libwifi-system-iface.so/d' build/make/target/product/gsi/30.txt
     #echo "" > frameworks/base/tools/protologtool/Android.bp
 }
