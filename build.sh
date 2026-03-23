@@ -51,7 +51,7 @@ UBOOT_DIR="u-boot"
 RKBIN_DIR="rkbin"
 CROSS_COMPILE="aarch64-linux-gnu-"
 
-ANDROID_ROOT=$(cd "$(dirname "$0")" && pwd)
+ANDROID_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 # Eigene TRUST.ini (liegt im Projektverzeichnis, nicht in rkbin)
 TRUST_INI="${ANDROID_ROOT}/trust/RK3568TRUST.ini"
@@ -168,22 +168,26 @@ fi
 # Kernel bauen
 if [ "$BUILD_KERNEL" = true ]; then
     echo ">>> Building Kernel..."
+    cd "$ANDROID_ROOT/kernel/rockchip"
 
-    cd kernel/rockchip
     export ARCH=arm64
-    export CROSS_COMPILE=~/Android/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
-    export CC=~/Android/prebuilts/clang/host/linux-x86/clang-r383902b1/bin/clang
+    export CROSS_COMPILE="$ANDROID_ROOT/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-"
+    export CC="$ANDROID_ROOT/prebuilts/clang/host/linux-x86/clang-r383902b1/bin/clang"
     export CLANG_TRIPLE=aarch64-linux-gnu-
 
     make rockchip_defconfig CC=$CC CROSS_COMPILE=$CROSS_COMPILE CLANG_TRIPLE=$CLANG_TRIPLE
     make -j$(nproc) Image dtbs CC=$CC CROSS_COMPILE=$CROSS_COMPILE CLANG_TRIPLE=$CLANG_TRIPLE
-    cd ~/Android
+
+    # Zurück ins Root-Verzeichnis — explizit absolut
+    cd "$ANDROID_ROOT"
 
     echo ">>> Moving Kernel..."
-
-    # Kernel und DTB in den Output kopieren
+    mkdir -p out/target/product/rk3566/
     cp kernel/rockchip/arch/arm64/boot/Image out/target/product/rk3566/kernel
     cp kernel/rockchip/arch/arm64/boot/dts/rockchip/rk3566-smatek-s9pe-nz.dtb out/target/product/rk3566/dtb.img
+
+    # Prüfen ob cp erfolgreich war
+    ls -lh out/target/product/rk3566/kernel && echo ">>> Kernel copy OK" || { echo ">>> Kernel copy FAILED"; exit 1; }
 fi
 
 # Android bauen
