@@ -1,0 +1,16 @@
+# Android fstab for Smatek RK3566
+# Generated from parameter.txt
+
+# Dynamic Partitions (super)
+system                                    /system      ext4      ro,barrier=1                                       wait,slotselect,avb=vbmeta,logical,first_stage_mount
+vendor                                    /vendor      ext4      ro,barrier=1                                       wait,slotselect,avb=vbmeta,logical,first_stage_mount
+product                                   /product     ext4      ro,barrier=1                                       wait,slotselect,avb=vbmeta,logical,first_stage_mount
+
+# Static Partitions
+/dev/block/by-name/misc                   /misc        emmc      defaults                                           defaults
+/dev/block/by-name/metadata               /metadata    ext4      noatime,nosuid,nodev,discard                       wait,formattable,first_stage_mount
+/dev/block/by-name/cache                  /cache       ext4      noatime,nosuid,nodev,barrier=1,data=ordered        wait,formattable
+/dev/block/by-name/userdata               /data        f2fs      noatime,nosuid,nodev,discard                       wait,formattable
+
+/dev/block/by-name/boot                   /boot        emmc      defaults                                           defaults
+/dev/block/by-name/recovery               /recovery    emmc      defaults                                           defaults

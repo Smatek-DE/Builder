@@ -1,18 +1,49 @@
 #!/bin/bash
 usage()
 {
-    echo "USAGE: [-b] [-a] [-c] [-r]"
+    echo "USAGE: [-B] [-A] [-C] [-R] [-K]"
     echo "  -B = build u-boot"
+    echo "  -K = build Kernel"
     echo "  -A = build Android"
     echo "  -C = clean build output"
     echo "  -R = Refresh Repositorys"
     exit 1
 }
 
+# Makefile-Patch Funktion
+patch_kernel_makefile() {
+    # ToDo: automatically find Makefile.append on these paths (for dynamic dts configurations)
+    KERNEL_MAKEFILE="${ANDROID_ROOT}/kernel/rockchip/arch/arm64/boot/dts/rockchip/Makefile"
+    APPEND_FILE="${ANDROID_ROOT}/kernel/rockchip/arch/arm64/boot/dts/rockchip/Makefile.append"
+
+    if ! grep -q "rk3566-smatek-s9pe-nz.dtb" "${KERNEL_MAKEFILE}"; then
+        cat "${APPEND_FILE}" >> "${KERNEL_MAKEFILE}"
+        echo ">>> Kernel Makefile patched."
+    else
+        echo ">>> Kernel Makefile already patched, skipping."
+    fi
+}
+
+patch_additional() {
+    # WifiTrackerLib prüfen und ggf. entfernen
+    if ! find . -name "Android.bp" -exec grep -l "name: \"WifiTrackerLib\"" {} \; 2>/dev/null | grep -q .; then
+        echo "WifiTrackerLib nicht gefunden - entferne Dependency aus SettingsLib"
+        sed -i '/"WifiTrackerLib"/d' frameworks/base/packages/SettingsLib/Android.bp
+    fi
+
+    find prebuilts/abi-dumps/vndk/30 -name libwifi-system-iface.so.lsdump -delete
+
+    sed -i '/"libwifi-system-iface"/d' system/connectivity/wificond/Android.bp
+    sed -i '/"libwifi-system-iface-test"/d' system/connectivity/wificond/Android.bp
+    #sed -i '/libwifi-system-iface.so/d' build/make/target/product/gsi/30.txt
+    #echo "" > frameworks/base/tools/protologtool/Android.bp
+}
+
 BUILD_DIR=smatek
 BUILD_INSTRUCTIONS=false
 BUILD_REFRESH=false
 BUILD_UBOOT=false
+BUILD_KERNEL=false
 BUILD_ANDROID=false
 BUILD_CLEAN=false
 
@@ -31,7 +62,7 @@ BL32=$(ls ${ANDROID_ROOT}/${RKBIN_DIR}/bin/rk35/rk3568_bl32_v*.bin   2>/dev/null
 DDR=$(ls  ${ANDROID_ROOT}/${RKBIN_DIR}/bin/rk35/rk3568_ddr_1056MHz_v*.bin 2>/dev/null | grep -v "eyescan" | tail -1)
 
 # check pass argument
-while getopts "ABCR" arg
+while getopts "ABCRK" arg
 do
 case $arg in
 A)
@@ -52,6 +83,9 @@ C)
     BUILD_CLEAN=true
     BUILD_INSTRUCTIONS=true
     ;;
+K)
+    BUILD_KERNEL=true
+    ;;
 ?)
     usage ;;
 esac
@@ -66,7 +100,8 @@ fi
 if [ "$BUILD_REFRESH" = true ] ; then
     echo ">>> Refreshing repositories..."
     git -C "${ANDROID_ROOT}/.repo/manifests" pull
-    repo sync -j15 --force-remove-dirty --force-sync
+    repo sync -j15 --force-remove-dirty --force-sync --prune
+    patch_kernel_makefile
     echo ">>> Repository refresh done."
 fi
 
@@ -130,10 +165,36 @@ if [ "$BUILD_UBOOT" = true ]; then
     cd ..
 fi
 
+# Kernel bauen
+if [ "$BUILD_KERNEL" = true ]; then
+    echo ">>> Building Kernel..."
+
+    cd kernel/rockchip
+    export ARCH=arm64
+    export CROSS_COMPILE=~/Android/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+    export CC=~/Android/prebuilts/clang/host/linux-x86/clang-r383902b1/bin/clang
+    export CLANG_TRIPLE=aarch64-linux-gnu-
+
+    make rockchip_defconfig CC=$CC CROSS_COMPILE=$CROSS_COMPILE CLANG_TRIPLE=$CLANG_TRIPLE
+    make -j$(nproc) Image dtbs CC=$CC CROSS_COMPILE=$CROSS_COMPILE CLANG_TRIPLE=$CLANG_TRIPLE
+    cd ~/Android
+
+    echo ">>> Moving Kernel..."
+
+    # Kernel und DTB in den Output kopieren
+    cp kernel/rockchip/arch/arm64/boot/Image out/target/product/rk3566/kernel
+    cp kernel/rockchip/arch/arm64/boot/dts/rockchip/rk3566-smatek-s9pe-nz.dtb out/target/product/rk3566/dtb.img
+fi
+
 # Android bauen
 if [ "$BUILD_ANDROID" = true ]; then
+    patch_kernel_makefile
+    patch_additional
+
     echo ">>> Building Android..."
     source build/envsetup.sh
-    lunch aosp_arm64-eng # ToDo
+    lunch smatek_rk3566-userdebug
     m -j$(nproc)
 fi
+
+echo ">>> Build done."
